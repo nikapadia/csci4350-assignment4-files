@@ -1,0 +1,239 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+# Required R package installation:
+
+# These will install packages if they are not already installed
+if (!require("devtools")) {
+   install.packages("devtools")
+   library(devtools)
+}
+
+if (!require("ggplot2")) {
+   install.packages("ggplot2")
+   library(ggplot2)
+}
+if (!require("knitr")) {
+   install.packages("knitr")
+   library(knitr)
+}
+if (!require("gplots")) {
+   install.packages("gplots")
+   library(gplots)
+}
+if (!require("ggbiplot")) {
+   devtools::install_git("https://github.com/vqv/ggbiplot.git")
+   library(ggbiplot)
+}
+  if (!require("dplyr")) {
+   install.packages("dplyr")
+   library(dplyr)
+  }
+
+  if (!require("ggdendro")) {
+   install.packages("ggdendro")
+   library(ggdendro)
+  }
+  if (!require("plotly")) {
+   install.packages("plotly")
+   library(plotly)
+  }
+  if (!require("heatmaply")) {
+   install.packages("heatmaply")
+   library(heatmaply)
+  }
+
+if (!require("pheatmap")) {
+ install.packages("pheatmap")
+  library(pheatmap)
+}
+
+library(ggfortify)
+library(e1071)
+library(class)
+library(psych)
+library(ggbiplot)
+library(utils)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# reading in the data
+```{r}
+# reading in the data
+data <- read.csv("FRB_H8_weekly_money_amounts - Dante Sheet.csv")
+dates <- as.Date(data$Time.period)
+
+# defining the recession dates
+recession_periods <- data.frame(
+  start = as.Date(c("1973-11-01", "1980-01-01", "1981-07-01", 
+                    "1990-07-01", "2001-03-01", "2007-12-01", 
+                    "2020-02-01")),
+  end = as.Date(c("1975-03-01", "1980-07-01", "1982-11-01", 
+                  "1991-03-01", "2001-11-01", "2009-06-01", 
+                  "2020-04-01"))
+)
+
+# Function to check if a date falls in a recession period
+is_in_recession <- function(date, periods) {
+  any(date >= periods$start & date <= periods$end)
+}
+
+# Apply the function to each date
+recession_flags <- sapply(dates, is_in_recession, periods = recession_periods)
+
+# Convert to 0s and 1s
+recession_flags <- as.integer(recession_flags)
+
+# adding the recession
+recession_flags <- factor(recession_flags, levels = c(0, 1), labels= c("no.recession", "recession"))
+data <- data.frame(recession=recession_flags, data=data[,-1])
+```
+
+# creating the naiveBayes models for the project
+```{r}
+# naiveBayes
+nb.s <- sample(nrow(data), 2000)
+nb.train <- data[nb.s,]
+nb.test <- data[-nb.s,]
+nb.mod <- naiveBayes(nb.train[,-1], nb.train[,1])
+nb.pred <- predict(nb.mod, nb.test)
+
+# naiveBayes w/ Laplace smoothing
+nb2.s <- sample(nrow(data), 2000)
+nb2.train <- data[nb2.s,]
+nb2.test <- data[-nb2.s,]
+nb2.mod <- naiveBayes(nb2.train[,-1], nb2.train[,1])
+nb2.pred <- predict(nb2.mod, nb2.test, laplace=1)
+```
+
+# trying the randomForest algorithm
+```{r}
+# generating the randomForest model
+rf.s <- sample(nrow(data), 1000)
+rf.train <- data[rf.s,]
+rf.test <- data[-rf.s,]
+rf.mod <- train(recession~ .,data=rf.train, method = "rf", prox = TRUE)
+```
+
+# trying the randomForest algorithm with SMOTE (Synthetic Minority Over-sampling Technique)
+```{r}
+# using a control factor
+# Control settings
+ctrl <- trainControl(
+  method = "cv",       # Cross-validation
+  number = 5,          # 5 folds
+  sampling = "smote",  # Oversample the minority class using SMOTE
+  classProbs = TRUE    # Use class probabilities
+)
+
+# generating the randomForest model
+rf2.s <- sample(nrow(data), 1000)
+rf2.train <- data[rf2.s,]
+rf2.test <- data[-rf2.s,]
+rf2.mod <- train(recession~ .,data=rf2.train, method = "rf", trControl=ctrl, prox = TRUE)
+```
+
+
+# testing the models
+```{r}
+########################## RF ##############################
+rf.pred <- predict(rf.mod, rf.test)
+cm.class = as.matrix(table(Actual = recession_flags[-rf.s], Predicted = rf.pred))
+
+cm.class
+
+n = sum(cm.class) # number of instances
+nc = nrow(cm.class) # number of classes
+diag = diag(cm.class) # number of correctly classified instances per class 
+rowsums = apply(cm.class, 1, sum) # number of instances per class
+colsums = apply(cm.class, 2, sum) # number of predictions per class
+p = rowsums / n # distribution of instances over the actual classes
+q = colsums / n # distribution of instances over the predicted 
+
+recall.class = diag / rowsums 
+precision.class = diag / colsums
+f1.class = 2 * precision.class * recall.class / (precision.class + recall.class)
+
+df.rf <- data.frame(precision.class, recall.class, f1.class)
+########################## RF W/ SMOTE ##############################
+rf2.pred <- predict(rf2.mod, rf2.test)
+cm.class = as.matrix(table(Actual = recession_flags[-rf2.s], Predicted = rf2.pred))
+
+cm.class
+
+n = sum(cm.class) # number of instances
+nc = nrow(cm.class) # number of classes
+diag = diag(cm.class) # number of correctly classified instances per class 
+rowsums = apply(cm.class, 1, sum) # number of instances per class
+colsums = apply(cm.class, 2, sum) # number of predictions per class
+p = rowsums / n # distribution of instances over the actual classes
+q = colsums / n # distribution of instances over the predicted 
+
+recall.class = diag / rowsums 
+precision.class = diag / colsums
+f1.class = 2 * precision.class * recall.class / (precision.class + recall.class)
+
+df.rf2 <- data.frame(precision.class, recall.class, f1.class)
+########################## NB ##############################
+nb.pred <- predict(nb.mod, nb.test)
+cm.class = as.matrix(table(Actual = recession_flags[-nb.s], Predicted = nb.pred))
+
+cm.class
+
+n = sum(cm.class) # number of instances
+nc = nrow(cm.class) # number of classes
+diag = diag(cm.class) # number of correctly classified instances per class 
+rowsums = apply(cm.class, 1, sum) # number of instances per class
+colsums = apply(cm.class, 2, sum) # number of predictions per class
+p = rowsums / n # distribution of instances over the actual classes
+q = colsums / n # distribution of instances over the predicted 
+
+recall.class = diag / rowsums 
+precision.class = diag / colsums
+f1.class = 2 * precision.class * recall.class / (precision.class + recall.class)
+
+df.nb <- data.frame(precision.class, recall.class, f1.class)
+########################## NB w/ Laplace Smoothing ##############################
+nb2.pred <- predict(nb2.mod, nb2.test)
+cm.class = as.matrix(table(Actual = recession_flags[-nb2.s], Predicted = nb2.pred))
+
+cm.class
+
+n = sum(cm.class) # number of instances
+nc = nrow(cm.class) # number of classes
+diag = diag(cm.class) # number of correctly classified instances per class 
+rowsums = apply(cm.class, 1, sum) # number of instances per class
+colsums = apply(cm.class, 2, sum) # number of predictions per class
+p = rowsums / n # distribution of instances over the actual classes
+q = colsums / n # distribution of instances over the predicted 
+
+recall.class = diag / rowsums 
+precision.class = diag / colsums
+f1.class = 2 * precision.class * recall.class / (precision.class + recall.class)
+
+df.nb2 <- data.frame(precision.class, recall.class, f1.class)
+```
+# creating grouped stacked bar chart
+```{r}
+metrics <- rep(c("precision.class", "recall.class", "f1.class"), 4)
+model.type <- c(rep("randomForest", 3), rep("randomForest w/ SMOTE", 3), rep("naiveBayes", 3), rep("naiveBayes w/ Laplace", 3))
+values <- c(df.rf[2,], df.rf2[2,], df.nb[2,], df.nb2[2,])
+score <- as.numeric(values)
+data <- data.frame(metrics, model.type, score)
+ 
+# Grouped
+ggplot(data, aes(fill=model.type, y=score, x=metrics)) + 
+    geom_bar(position="dodge", stat="identity") +
+    ggtitle("Model Analysis")
+```
+# dfs
+```{r}
+var.rankings <- varImp(rf2.mod)
+print(var.rankings)
+```
+
+
